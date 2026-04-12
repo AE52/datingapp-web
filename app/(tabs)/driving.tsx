@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Dimensions, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LineChart, BarChart } from 'react-native-chart-kit';
 import * as Sharing from 'expo-sharing';
+import { API_BASE_URL, NOTIFICATIONS_API_URL, getStoredUser } from '@/api';
 
 const W = Dimensions.get('window').width;
 
@@ -16,12 +17,56 @@ const BADGES = [
 
 export default function DrivingScreen() {
   const [showAnalysis, setShowAnalysis] = useState(false);
+  const [user, setUser] = useState<any>(null);
+  const [circleId, setCircleId] = useState<number>(1);
+
+  useEffect(() => {
+    const load = async () => {
+      const storedUser = await getStoredUser();
+      if (storedUser) {
+        setUser(storedUser);
+        try {
+          const circlesRes = await fetch(`${API_BASE_URL.replace('/users', '/circles')}/user/${storedUser.id}`);
+          const circles = await circlesRes.json();
+          if (Array.isArray(circles) && circles[0]?.id) {
+            setCircleId(circles[0].id);
+          }
+        } catch {}
+      }
+    };
+    load();
+  }, []);
 
   const shareWeek = async () => {
     Alert.alert('Haftalık Özet', 'Şık bir özet kartı oluşturuldu. Paylaşmak ister misiniz?', [
-      { text: 'Paylaş', onPress: () => Alert.alert('Simülasyon', 'Paylaşım ekranı açıldı!') },
+      { text: 'Paylaş', onPress: async () => {
+        try {
+          await Sharing.shareAsync(`data:text/plain,Surus skoru 92%0AToplam mesafe 142.5 km%0AGuvenlik puani 94`);
+        } catch {
+          Alert.alert('Paylasim', 'Paylasim bu cihazda kullanilamadi.');
+        }
+      } },
       { text: 'İptal', style: 'cancel' }
     ]);
+  };
+
+  const triggerCrashAssist = async () => {
+    if (!user) return;
+    try {
+      await fetch(`${NOTIFICATIONS_API_URL}/help-alert`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          senderId: user.id,
+          circleId,
+          severity: 'high',
+          content: 'Muhtemel kaza veya arac destegi talebi',
+        }),
+      });
+      Alert.alert('Acil yardim baslatildi', 'Ailene kritik surus yardim bildirimi gonderildi.');
+    } catch {
+      Alert.alert('Hata', 'Acil yardim baslatilamadi.');
+    }
   };
   
   const weeklyData = {
@@ -49,6 +94,18 @@ export default function DrivingScreen() {
           <View style={styles.scoreCircle}>
             <Text style={styles.scoreNum}>92</Text>
           </View>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Yol Yardimi</Text>
+          <TouchableOpacity style={styles.assistCard} onPress={triggerCrashAssist}>
+            <Ionicons name="warning" size={28} color="#fff" />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.assistTitle}>Kaza / Yol Yardimi Baslat</Text>
+              <Text style={styles.assistText}>Kritik yardim akisini circle uyelerine iletir.</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={24} color="#fff" />
+          </TouchableOpacity>
         </View>
 
         {/* Rozetler Section */}
@@ -176,6 +233,9 @@ const styles = StyleSheet.create({
   badgeIcon: { width: 70, height: 70, borderRadius: 35, justifyContent: 'center', alignItems: 'center', marginBottom: 8 },
   badgeName: { fontSize: 12, fontWeight: '700', color: '#1e293b', textAlign: 'center' },
   chart: { marginVertical: 10, borderRadius: 16 },
+  assistCard: { backgroundColor: '#ef4444', padding: 18, borderRadius: 18, flexDirection: 'row', alignItems: 'center', gap: 14 },
+  assistTitle: { color: '#fff', fontWeight: '800', fontSize: 16 },
+  assistText: { color: 'rgba(255,255,255,0.85)', fontSize: 12, marginTop: 4 },
   tripRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', padding: 15, borderRadius: 16, marginBottom: 10, elevation: 2 },
   tripInfo: { flex: 1, marginLeft: 12 },
   tripRoute: { fontSize: 16, fontWeight: '700', color: '#1e293b' },

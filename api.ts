@@ -19,6 +19,7 @@ export const API_BASE_URL = `${resolveApiOrigin()}/api/users`;
 export const API_ORIGIN = resolveApiOrigin();
 export const NOTIFICATIONS_API_URL = `${API_ORIGIN}/api/notifications`;
 export const EMERGENCY_CONTACTS_API_URL = `${API_ORIGIN}/api/emergency-contacts`;
+export const MEDICAL_PROFILE_API_URL = `${API_ORIGIN}/api/medical-profile`;
 
 async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 5000) {
   const controller = new AbortController();

@@ -38,6 +38,7 @@ export default function PlacesScreen() {
   const [newName, setNewName] = useState('');
   const [newLat, setNewLat] = useState('');
   const [newLng, setNewLng] = useState('');
+  const [savingPlaceId, setSavingPlaceId] = useState<number | null>(null);
 
   useEffect(() => {
     const load = async () => {
@@ -87,13 +88,27 @@ export default function PlacesScreen() {
       await fetch(`${PLACE_API}/create?circleId=${circleId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newName, latitude: parseFloat(newLat), longitude: parseFloat(newLng), radiusInMeters: 150 }),
+        body: JSON.stringify({ name: newName, latitude: parseFloat(newLat), longitude: parseFloat(newLng), radiusInMeters: 150, alertOnEnter: true, alertOnExit: true }),
       });
       setShowAddModal(false);
       setNewName(''); setNewLat(''); setNewLng('');
       fetchPlaces();
     } catch (e) {
       Alert.alert('Hata', 'Yer eklenemedi.');
+    }
+  };
+
+  const updatePlaceSetting = async (placeId: number, patch: Record<string, unknown>) => {
+    setSavingPlaceId(placeId);
+    try {
+      await fetch(`${PLACE_API}/${placeId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      setPlaces((prev) => prev.map((place) => place.id === placeId ? { ...place, ...patch } : place));
+    } finally {
+      setSavingPlaceId(null);
     }
   };
 
@@ -157,13 +172,21 @@ export default function PlacesScreen() {
                 <View style={styles.placeIcon}>
                   <Text style={{ fontSize: 26 }}>{icon}</Text>
                 </View>
-                <View style={styles.placeBody}>
-                  <Text style={styles.placeName}>{item.name}</Text>
-                  <Text style={styles.placeCoord}>
-                    {item.latitude?.toFixed(4)}, {item.longitude?.toFixed(4)}  •  {item.radiusInMeters}m yarıçap
-                  </Text>
+              <View style={styles.placeBody}>
+                <Text style={styles.placeName}>{item.name}</Text>
+                <Text style={styles.placeCoord}>
+                  {item.latitude?.toFixed(4)}, {item.longitude?.toFixed(4)}  •  {item.radiusInMeters}m yarıçap
+                </Text>
+                <View style={styles.settingRow}>
+                  <TouchableOpacity style={[styles.settingChip, item.alertOnEnter && styles.settingChipActive]} onPress={() => updatePlaceSetting(item.id, { alertOnEnter: !item.alertOnEnter })}>
+                    <Text style={[styles.settingChipText, item.alertOnEnter && styles.settingChipTextActive]}>Giris Uyarisi</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[styles.settingChip, item.alertOnExit && styles.settingChipActive]} onPress={() => updatePlaceSetting(item.id, { alertOnExit: !item.alertOnExit })}>
+                    <Text style={[styles.settingChipText, item.alertOnExit && styles.settingChipTextActive]}>Cikis Uyarisi</Text>
+                  </TouchableOpacity>
                 </View>
-                <Ionicons name="navigate-outline" size={22} color="#8b5cf6" style={{ paddingLeft: 10 }} />
+              </View>
+                <Ionicons name={savingPlaceId === item.id ? 'sync' : 'navigate-outline'} size={22} color="#8b5cf6" style={{ paddingLeft: 10 }} />
               </View>
             );
           }}
@@ -212,6 +235,11 @@ const styles = StyleSheet.create({
   placeBody: { flex: 1, marginLeft: 14 },
   placeName: { fontSize: 17, fontWeight: '700', color: '#111', marginBottom: 3 },
   placeCoord: { fontSize: 12, color: '#888' },
+  settingRow: { flexDirection: 'row', gap: 8, marginTop: 10, flexWrap: 'wrap' },
+  settingChip: { paddingHorizontal: 10, paddingVertical: 7, borderRadius: 16, backgroundColor: '#f3f4f6' },
+  settingChipActive: { backgroundColor: '#ede9fe' },
+  settingChipText: { fontSize: 12, color: '#4b5563', fontWeight: '600' },
+  settingChipTextActive: { color: '#6d28d9' },
 
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   modalBox: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: Platform.OS === 'ios' ? 40 : 24 },

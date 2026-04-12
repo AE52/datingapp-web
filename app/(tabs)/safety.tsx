@@ -6,7 +6,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { API_BASE_URL, EMERGENCY_CONTACTS_API_URL, NOTIFICATIONS_API_URL, getStoredUser } from '@/api';
+import { API_BASE_URL, EMERGENCY_CONTACTS_API_URL, MEDICAL_PROFILE_API_URL, NOTIFICATIONS_API_URL, getStoredUser } from '@/api';
 
 type Contact = { id?: number; name: string; phone: string };
 const DEFAULT_CONTACTS: Contact[] = [
@@ -25,7 +25,7 @@ export default function SafetyScreen() {
 
   // Medical ID
   const [showMedID, setShowMedID] = useState(false);
-  const [medData, setMedData] = useState({ bloodType: 'A Rh+', allergies: 'Penisilin', conditions: 'Astım' });
+  const [medData, setMedData] = useState({ bloodType: 'A Rh+', allergies: 'Penisilin', conditions: 'Astım', medications: '', emergencyNotes: '' });
   const NOTIF_API = NOTIFICATIONS_API_URL;
 
   useEffect(() => {
@@ -49,12 +49,35 @@ export default function SafetyScreen() {
             }
           }
         } catch {}
+        try {
+          const profileRes = await fetch(`${MEDICAL_PROFILE_API_URL}/${storedUser.id}`);
+          if (profileRes.ok) {
+            const profile = await profileRes.json();
+            setMedData({
+              bloodType: profile.bloodType || '',
+              allergies: profile.allergies || '',
+              conditions: profile.conditions || '',
+              medications: profile.medications || '',
+              emergencyNotes: profile.emergencyNotes || '',
+            });
+          }
+        } catch {}
       }
     };
     load();
   }, []);
 
-  const saveMedicalData = async () => setShowMedID(false);
+  const saveMedicalData = async () => {
+    if (!user) return;
+    try {
+      await fetch(`${MEDICAL_PROFILE_API_URL}/${user.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(medData),
+      });
+      setShowMedID(false);
+    } catch {}
+  };
 
   const addContact = async () => {
     if (!newName.trim() || !newPhone.trim() || !user) return;
@@ -224,6 +247,7 @@ export default function SafetyScreen() {
              <View style={styles.medRow}><Text style={styles.medLabel}>Kan Grubu:</Text><Text style={styles.medVal}>{medData.bloodType || 'Belirtilmedi'}</Text></View>
              <View style={styles.medRow}><Text style={styles.medLabel}>Alerjiler:</Text><Text style={styles.medVal}>{medData.allergies || 'Yok'}</Text></View>
              <View style={styles.medRow}><Text style={styles.medLabel}>Kronik Hastalık:</Text><Text style={styles.medVal}>{medData.conditions || 'Yok'}</Text></View>
+             <View style={styles.medRow}><Text style={styles.medLabel}>Ilaclar:</Text><Text style={styles.medVal}>{medData.medications || 'Belirtilmedi'}</Text></View>
           </View>
           <Text style={styles.medHint}>* Bu bilgiler SOS durumunda aile üyelerinizle paylaşılır.</Text>
         </View>
@@ -248,6 +272,8 @@ export default function SafetyScreen() {
             <TextInput style={styles.input} placeholder="Kan Grubu" value={medData.bloodType} onChangeText={t => setMedData({...medData, bloodType: t})} placeholderTextColor="#9ca3af" />
             <TextInput style={styles.input} placeholder="Alerjiler" value={medData.allergies} onChangeText={t => setMedData({...medData, allergies: t})} placeholderTextColor="#9ca3af" />
             <TextInput style={styles.input} placeholder="Kronik Hastalıklar" value={medData.conditions} onChangeText={t => setMedData({...medData, conditions: t})} placeholderTextColor="#9ca3af" />
+            <TextInput style={styles.input} placeholder="Sürekli Ilaclar" value={medData.medications} onChangeText={t => setMedData({...medData, medications: t})} placeholderTextColor="#9ca3af" />
+            <TextInput style={styles.input} placeholder="Acil Durum Notu" value={medData.emergencyNotes} onChangeText={t => setMedData({...medData, emergencyNotes: t})} placeholderTextColor="#9ca3af" />
             <View style={styles.modalBtns}>
               <TouchableOpacity style={styles.cancelBtn} onPress={() => setShowMedID(false)}><Text style={styles.cancelBtnTxt}>Vazgeç</Text></TouchableOpacity>
               <TouchableOpacity style={styles.okBtn} onPress={saveMedicalData}><Text style={styles.okBtnTxt}>Kaydet</Text></TouchableOpacity>
