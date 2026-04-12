@@ -6,10 +6,9 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { API_BASE_URL, getStoredUser } from '@/api';
+import { API_BASE_URL, EMERGENCY_CONTACTS_API_URL, NOTIFICATIONS_API_URL, getStoredUser } from '@/api';
 
-type Contact = { name: string; phone: string };
+type Contact = { id?: number; name: string; phone: string };
 const DEFAULT_CONTACTS: Contact[] = [
   { name: 'Ayşe Özdemir', phone: '0532 111 22 33' },
   { name: 'Baba', phone: '0533 444 55 66' },
@@ -22,39 +21,69 @@ export default function SafetyScreen() {
   const [newPhone, setNewPhone] = useState('');
   const [sosActive, setSosActive] = useState(false);
   const [user, setUser] = useState<any>(null);
+  const [circleId, setCircleId] = useState<number>(1);
 
   // Medical ID
   const [showMedID, setShowMedID] = useState(false);
   const [medData, setMedData] = useState({ bloodType: 'A Rh+', allergies: 'Penisilin', conditions: 'Astım' });
-  const NOTIF_API = API_BASE_URL.replace('/users', '/notifications');
+  const NOTIF_API = NOTIFICATIONS_API_URL;
 
   useEffect(() => {
-    getStoredUser().then(u => { if (u) setUser(u); });
-    AsyncStorage.getItem('emergencyContacts').then(s => { if (s) setContacts(JSON.parse(s)); });
-    AsyncStorage.getItem('medicalID').then(s => { if (s) setMedData(JSON.parse(s)); });
+    const load = async () => {
+      const storedUser = await getStoredUser();
+      if (storedUser) {
+        setUser(storedUser);
+        try {
+          const circlesRes = await fetch(`${API_BASE_URL.replace('/users', '/circles')}/user/${storedUser.id}`);
+          const circles = await circlesRes.json();
+          if (Array.isArray(circles) && circles[0]?.id) {
+            setCircleId(circles[0].id);
+          }
+        } catch {}
+        try {
+          const res = await fetch(`${EMERGENCY_CONTACTS_API_URL}/${storedUser.id}`);
+          if (res.ok) {
+            const savedContacts = await res.json();
+            if (Array.isArray(savedContacts) && savedContacts.length > 0) {
+              setContacts(savedContacts);
+            }
+          }
+        } catch {}
+      }
+    };
+    load();
   }, []);
 
-  const saveMedicalData = async () => {
-    await AsyncStorage.setItem('medicalID', JSON.stringify(medData));
-    setShowMedID(false);
-  };
-
-  const saveContacts = async (list: Contact[]) => {
-    setContacts(list);
-    await AsyncStorage.setItem('emergencyContacts', JSON.stringify(list));
-  };
+  const saveMedicalData = async () => setShowMedID(false);
 
   const addContact = async () => {
-    if (!newName.trim() || !newPhone.trim()) return;
-    const list = [...contacts, { name: newName, phone: newPhone }];
-    await saveContacts(list);
-    setNewName(''); setNewPhone(''); setShowAdd(false);
+    if (!newName.trim() || !newPhone.trim() || !user) return;
+    try {
+      const res = await fetch(`${EMERGENCY_CONTACTS_API_URL}/${user.id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newName.trim(), phone: newPhone.trim() }),
+      });
+      if (res.ok) {
+        const created = await res.json();
+        setContacts((prev) => [...prev, created]);
+        setNewName('');
+        setNewPhone('');
+        setShowAdd(false);
+      }
+    } catch {}
   };
 
   const removeContact = (idx: number) => {
     Alert.alert('Sil', `${contacts[idx].name} silinsin mi?`, [
       { text: 'Vazgeç', style: 'cancel' },
-      { text: 'Sil', style: 'destructive', onPress: () => saveContacts(contacts.filter((_, i) => i !== idx)) },
+      { text: 'Sil', style: 'destructive', onPress: async () => {
+        const target = contacts[idx];
+        if (target.id) {
+          await fetch(`${EMERGENCY_CONTACTS_API_URL}/${target.id}`, { method: 'DELETE' });
+        }
+        setContacts((prev) => prev.filter((_, i) => i !== idx));
+      } },
     ]);
   };
 
@@ -64,12 +93,32 @@ export default function SafetyScreen() {
     Vibration.vibrate([0, 400, 200, 400]);
     if (user) {
       try {
-        await fetch(`${NOTIF_API}/sos/${user.id}?circleId=1`, { method: 'POST' });
+        await fetch(`${NOTIF_API}/sos/${user.id}?circleId=${circleId}`, { method: 'POST' });
       } catch (_) {}
     }
     Alert.alert('🚨 SOS Tetiklendi!', 'Tüm grup üyelerine ve acil kişilerinize bildirim gönderildi.', [
       { text: 'Tamam', onPress: () => setSosActive(false) },
     ]);
+  };
+
+  const triggerHelpAlert = async (severity: 'low' | 'medium' | 'high') => {
+    if (!user) return;
+    try {
+      await fetch(`${NOTIF_API}/help-alert`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          senderId: user.id,
+          circleId,
+          severity,
+          content: `${severity.toUpperCase()} seviye yardim talebi`,
+        }),
+      });
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Alert.alert('Yardim bildirimi gonderildi', 'Cevrene yardim cagrisini ilettik.');
+    } catch {
+      Alert.alert('Hata', 'Yardim bildirimi gonderilemedi.');
+    }
   };
 
   const SAFETY_TIPS = [
@@ -99,6 +148,22 @@ export default function SafetyScreen() {
           <Text style={styles.sosTitleTxt}>Acil SOS Gönder</Text>
           <Text style={styles.sosSubtitle}>Tüm aile üyelerine anlık bildirim gider</Text>
         </TouchableOpacity>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Yardim Uyarilari</Text>
+          <View style={styles.quickCallRow}>
+            {[
+              { label: 'Dusuk', severity: 'low', color: '#0ea5e9' },
+              { label: 'Orta', severity: 'medium', color: '#f59e0b' },
+              { label: 'Kritik', severity: 'high', color: '#ef4444' },
+            ].map((item) => (
+              <TouchableOpacity key={item.label} style={[styles.quickCall, { borderColor: item.color }]} onPress={() => triggerHelpAlert(item.severity as any)}>
+                <Ionicons name="warning-outline" size={26} color={item.color} />
+                <Text style={styles.quickCallLabel}>{item.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
 
         {/* Hızlı Arama */}
         <View style={styles.section}>

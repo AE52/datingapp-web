@@ -10,7 +10,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import Toast from 'react-native-toast-message';
 import AppMap, { AppMarker } from '@/components/AppMap';
-import { API_BASE_URL, getStoredUser } from '@/api';
+import { API_BASE_URL, NOTIFICATIONS_API_URL, getStoredUser } from '@/api';
 import * as Haptics from 'expo-haptics';
 import * as Location from 'expo-location';
 
@@ -20,7 +20,7 @@ type AppNotification = { id: number; sender?: User; receiver?: User; type: strin
 type NotificationOption = { type: string; title: string; subtitle: string; icon: keyof typeof Ionicons.glyphMap; tone: string; content: string };
 
 const CIRCLE_API = API_BASE_URL.replace('/users', '/circles');
-const NOTIF_API  = API_BASE_URL.replace('/users', '/notifications');
+const NOTIF_API  = NOTIFICATIONS_API_URL;
 const BC = (pct: number) => pct > 50 ? '#4caf50' : pct > 20 ? '#ff9800' : '#ef4444';
 const NOTIFICATION_OPTIONS: NotificationOption[] = [
   { type: 'POKE', title: 'Dürt', subtitle: 'Kısa bir ping gönder', icon: 'sparkles-outline', tone: '#6d28d9', content: 'Sadece ses veriyorum, müsait olunca yaz.' },
@@ -156,9 +156,26 @@ export default function MapScreen() {
     }
   };
 
-  const checkIn = () => {
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    Toast.show({ type: 'success', text1: 'Yer bildirimi paylaşıldı', text2: `Konumun "${activeCircle?.name}" grubuna gönderildi.` });
+  const checkIn = async () => {
+    if (!currentUser || !activeCircle) return;
+    try {
+      const location = await Location.getCurrentPositionAsync({});
+      await fetch(`${NOTIF_API}/check-in`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          senderId: currentUser.id,
+          circleId: activeCircle.id,
+          content: locationLabels[currentUser.id] || 'Canli konum',
+          latitude: location.coords.latitude,
+          longitude: location.coords.longitude,
+        }),
+      });
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Toast.show({ type: 'success', text1: 'Check-in gonderildi', text2: `Konumun "${activeCircle.name}" grubuna bildirildi.` });
+    } catch {
+      Toast.show({ type: 'error', text1: 'Check-in gonderilemedi', text2: 'Konum alinirken veya bildirim gonderilirken hata olustu.' });
+    }
   };
 
   const handleUserPress = (user: User) => {

@@ -7,7 +7,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
-import { API_BASE_URL, getStoredUser } from '@/api';
+import * as Location from 'expo-location';
+import { API_BASE_URL, NOTIFICATIONS_API_URL, getStoredUser } from '@/api';
 
 const AVATAR_COLORS = ['#6d28d9', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#ec4899'];
 
@@ -18,6 +19,8 @@ export default function ProfileScreen() {
   const [showEdit, setShowEdit] = useState(false);
   const [avatarColor, setAvatarColor] = useState('#6d28d9');
   const [showColorPicker, setShowColorPicker] = useState(false);
+  const [bubbleEnabled, setBubbleEnabled] = useState(false);
+  const [circleId, setCircleId] = useState<number>(1);
 
   useEffect(() => {
     const load = async () => {
@@ -25,9 +28,17 @@ export default function ProfileScreen() {
       if (u) {
         setUser(u);
         setGhostMode(u.ghostMode);
+        setBubbleEnabled(u.bubbleEnabled);
         setEditName(u.username);
         const saved = await AsyncStorage.getItem(`avatarColor_${u.id}`);
         if (saved) setAvatarColor(saved);
+        try {
+          const circlesRes = await fetch(`${API_BASE_URL.replace('/users', '/circles')}/user/${u.id}`);
+          const circles = await circlesRes.json();
+          if (Array.isArray(circles) && circles[0]?.id) {
+            setCircleId(circles[0].id);
+          }
+        } catch {}
       }
     };
     load();
@@ -70,6 +81,57 @@ export default function ProfileScreen() {
     setAvatarColor(color);
     if (user) await AsyncStorage.setItem(`avatarColor_${user.id}`, color);
     setShowColorPicker(false);
+  };
+
+  const toggleBubbleMode = async (val: boolean) => {
+    if (!user) return;
+    setBubbleEnabled(val);
+    try {
+      let latitude = user.latitude;
+      let longitude = user.longitude;
+      if (val) {
+        const permission = await Location.requestForegroundPermissionsAsync();
+        if (permission.status === 'granted') {
+          const current = await Location.getCurrentPositionAsync({});
+          latitude = current.coords.latitude;
+          longitude = current.coords.longitude;
+        }
+      }
+      const res = await fetch(`${API_BASE_URL}/${user.id}/bubble`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          enabled: val,
+          latitude,
+          longitude,
+          radiusKm: 0.8,
+          durationMinutes: val ? 120 : 0,
+        }),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        await AsyncStorage.setItem('user', JSON.stringify(updated));
+        setUser(updated);
+      }
+    } catch {}
+  };
+
+  const sendLowBatteryAlert = async () => {
+    if (!user) return;
+    try {
+      await fetch(`${NOTIFICATIONS_API_URL}/low-battery`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          senderId: user.id,
+          circleId,
+          batteryLevel: user.batteryLevel ?? 15,
+        }),
+      });
+      Alert.alert('Bildirim gonderildi', 'Dusuk pil uyarisini cevrendeki uyelere ilettik.');
+    } catch {
+      Alert.alert('Hata', 'Dusuk pil uyarisi gonderilemedi.');
+    }
   };
 
   const handleLogout = async () => {
@@ -179,7 +241,20 @@ export default function ProfileScreen() {
             <Text style={styles.rowLabel}>Hayalet Modu</Text>
             <Switch value={ghostMode} onValueChange={toggleGhostMode} trackColor={{ true: '#6d28d9', false: '#e5e7eb' }} />
           </View>
+          <View style={styles.row}>
+            <Ionicons name="radio-outline" size={22} color="#0ea5e9" />
+            <Text style={styles.rowLabel}>Bubble Konumu</Text>
+            <Switch value={bubbleEnabled} onValueChange={toggleBubbleMode} trackColor={{ true: '#0ea5e9', false: '#e5e7eb' }} />
+          </View>
           <Text style={styles.hint}>Hayalet modundayken konumunuz gizlenir.</Text>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Guvenlik Bildirimleri</Text>
+          <TouchableOpacity style={styles.watchBtn} onPress={sendLowBatteryAlert}>
+            <Ionicons name="battery-dead-outline" size={18} color="#ef4444" />
+            <Text style={[styles.watchBtnText, { color: '#ef4444' }]}>Dusuk pil uyarisi gonder</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Tehlike Bölgesi */}
