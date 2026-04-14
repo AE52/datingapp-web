@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { API_BASE_URL } from '@/api';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLocalSearchParams, router } from 'expo-router';
 
 type HistoryItem = {
@@ -17,6 +16,7 @@ export default function HistoryScreen() {
   const { userId, username } = useLocalSearchParams<{ userId: string, username: string }>();
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [emptyMessage, setEmptyMessage] = useState('Henüz bir hareket kaydı yok.');
 
   useEffect(() => {
     fetchHistory();
@@ -26,10 +26,19 @@ export default function HistoryScreen() {
     if (!userId) return;
     try {
       const res = await fetch(`${API_BASE_URL}/${userId}/history`);
+      if (res.status === 403) {
+        setHistory([]);
+        setEmptyMessage('Bu kullanıcının ayrıntılı konum geçmişi şu anda paylaşılmıyor.');
+        return;
+      }
+      if (!res.ok) {
+        throw new Error(`History request failed with ${res.status}`);
+      }
       const data = await res.json();
       setHistory(data);
     } catch (e) {
       console.error(e);
+      setEmptyMessage('Konum geçmişi yüklenemedi.');
     } finally {
       setLoading(false);
     }
@@ -73,14 +82,12 @@ export default function HistoryScreen() {
           keyExtractor={item => item.id.toString()}
           renderItem={renderItem}
           contentContainerStyle={styles.list}
-          ListEmptyComponent={<Text style={styles.empty}>Henüz bir hareket kaydı yok.</Text>}
+          ListEmptyComponent={<Text style={styles.empty}>{emptyMessage}</Text>}
         />
       )}
     </SafeAreaView>
   );
 }
-
-import { Alert } from 'react-native';
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8f9fa' },

@@ -3,40 +3,30 @@ import { StyleSheet, View, Text, TextInput, TouchableOpacity, Alert } from 'reac
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { API_BASE_URL, fetchWithTimeout } from '@/api';
+import { getStoredUser, login } from '@/api';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('eren@example.com');
-  const [password, setPassword] = useState('1234');
+  const [password, setPassword] = useState('VibeApp!2026');
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     const checkLogin = async () => {
-      const user = await AsyncStorage.getItem('user');
+      const user = await getStoredUser(false);
       if (user) router.replace('/(tabs)');
     };
     checkLogin();
   }, []);
 
   const handleLogin = async () => {
-    if (!email) return;
+    if (!email.trim() || !password) return;
     setLoading(true);
     try {
-      const response = await fetchWithTimeout(`${API_BASE_URL}/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
-      }, 5000);
-      if (response.ok) {
-        const user = await response.json();
-        await AsyncStorage.setItem('user', JSON.stringify(user));
-        router.replace('/(tabs)');
-      } else {
-        Alert.alert('Giriş Başarısız', 'Geçersiz e-posta. İpucu: eren@example.com');
-      }
-    } catch (e: any) {
-      Alert.alert('Bağlantı Hatası', `Sunucuya bağlanılamadı.\nURL: ${API_BASE_URL}\nHata: ${e.message}`);
+      await login(email, password);
+      router.replace('/(tabs)');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Giriş yapılamadı.';
+      Alert.alert('Giriş Başarısız', message);
     } finally {
       setLoading(false);
     }
@@ -76,7 +66,7 @@ export default function LoginScreen() {
         <TouchableOpacity style={styles.loginButton} onPress={handleLogin} disabled={loading}>
           <Text style={styles.loginButtonText}>{loading ? 'Giriş yapılıyor...' : 'Giriş Yap'}</Text>
         </TouchableOpacity>
-        <Text style={styles.hint}>💡 eren@example.com / 1234</Text>
+        <Text style={styles.hint}>Demo hesap: eren@example.com / VibeApp!2026</Text>
       </View>
     </SafeAreaView>
   );

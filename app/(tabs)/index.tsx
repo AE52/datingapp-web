@@ -1,20 +1,31 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import {
   StyleSheet, View, Text, TouchableOpacity, Platform,
-  Animated, Easing, Modal, FlatList,
+  Animated, Easing, Modal, FlatList, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import BottomSheet, { BottomSheetScrollView } from '@gorhom/bottom-sheet';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import Toast from 'react-native-toast-message';
 import AppMap, { AppMarker } from '@/components/AppMap';
-import { API_BASE_URL, NOTIFICATIONS_API_URL, getStoredUser } from '@/api';
+import { API_BASE_URL, NOTIFICATIONS_API_URL, getStoredUser, logout } from '@/api';
 import * as Haptics from 'expo-haptics';
 import * as Location from 'expo-location';
 
-type User = { id: number; username: string; email: string; batteryLevel: number; ghostMode: boolean; latitude?: number; longitude?: number; locationUpdateFrequency?: number; };
+type User = {
+  id: number;
+  username: string;
+  email?: string | null;
+  batteryLevel?: number;
+  ghostMode?: boolean;
+  bubbleEnabled?: boolean;
+  latitude?: number | null;
+  longitude?: number | null;
+  locationUpdateFrequency?: number;
+  locationVisibility?: 'EXACT' | 'APPROXIMATE' | 'HIDDEN' | 'UNAVAILABLE';
+  locationRadiusKm?: number | null;
+};
 type Circle = { id: number; name: string; admin: User; members: User[] };
 type AppNotification = { id: number; sender?: User; receiver?: User; type: string; content: string; timestamp: string; read: boolean };
 type NotificationOption = { type: string; title: string; subtitle: string; icon: keyof typeof Ionicons.glyphMap; tone: string; content: string };
@@ -50,6 +61,24 @@ export default function MapScreen() {
   const mapRef = useRef<any>(null);
   const snapPoints = useMemo(() => ['22%', '50%', '92%'], []);
   const [kisses, setKisses] = useState<{ id: number; scale: Animated.Value; ty: Animated.Value }[]>([]);
+
+  const getLocationSubtitle = (user: User) => {
+    if (user.locationVisibility === 'HIDDEN') return 'Konum gizli tutuluyor';
+    if (user.locationVisibility === 'UNAVAILABLE') return 'Konum paylaşımı yok';
+
+    const label = locationLabels[user.id];
+    if (!label) {
+      return user.locationVisibility === 'APPROXIMATE' ? 'Yaklaşık konum hazırlanıyor' : 'Konum bilgisi hazırlanıyor';
+    }
+
+    return user.locationVisibility === 'APPROXIMATE' ? `Yaklaşık: ${label}` : `📍 ${label}`;
+  };
+
+  const getVisibilityBadge = (user: User) => {
+    if (user.locationVisibility === 'APPROXIMATE') return 'Yaklaşık';
+    if (user.locationVisibility === 'HIDDEN') return 'Gizli';
+    return null;
+  };
 
   // ── Init ────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -118,6 +147,7 @@ export default function MapScreen() {
   useEffect(() => {
     users.forEach((user) => {
       if (!user.latitude || !user.longitude || locationLabels[user.id]) return;
+      if (user.locationVisibility === 'HIDDEN' || user.locationVisibility === 'UNAVAILABLE') return;
       Location.reverseGeocodeAsync({ latitude: user.latitude, longitude: user.longitude })
         .then((results) => {
           const first = results[0];
@@ -246,6 +276,10 @@ export default function MapScreen() {
 
   const openHistory = () => {
     if (!selectedUser) return;
+    if (selectedUser.id !== currentUser?.id && selectedUser.locationVisibility !== 'EXACT') {
+      Alert.alert('Geçmiş Paylaşılmıyor', 'Bu kullanıcının ayrıntılı konum geçmişi şu anda paylaşılmıyor.');
+      return;
+    }
     closeUserSheets();
     router.push({ pathname: '/(tabs)/history', params: { userId: selectedUser.id.toString(), username: selectedUser.username } } as any);
   };
@@ -260,7 +294,7 @@ export default function MapScreen() {
   };
 
   const handleLogout = async () => {
-    await AsyncStorage.removeItem('user');
+    await logout();
     router.replace('/login');
   };
 
@@ -364,7 +398,7 @@ export default function MapScreen() {
              <Text style={s.vibeDesc}>Tüm aile üyeleri güvende ve hız limitlerine uyuyor.</Text>
              <View style={s.vibeStats}>
                 <View style={s.vibeStat}>
-                   <Ionicons name="shield-check" size={16} color="#10b981" />
+                   <Ionicons name="shield-checkmark" size={16} color="#10b981" />
                    <Text style={s.vibeStatTxt}>3 Güvenli Bölge</Text>
                 </View>
                 <View style={s.vibeStat}>
@@ -389,13 +423,13 @@ export default function MapScreen() {
               <View style={s.info}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                   <Text style={s.uName}>{user.username}{user.id === currentUser?.id ? ' (Sen)' : ''}</Text>
-                  {user.ghostMode && <View style={s.ghost}><Text style={s.ghostTxt}>Gizli</Text></View>}
+                  {getVisibilityBadge(user) && <View style={s.ghost}><Text style={s.ghostTxt}>{getVisibilityBadge(user)}</Text></View>}
                 </View>
-                <Text style={s.uLoc} numberOfLines={1}>{locationLabels[user.id] ? `📍 ${locationLabels[user.id]}` : '📍 Konum bilgisi hazırlanıyor'}</Text>
+                <Text style={s.uLoc} numberOfLines={1}>{getLocationSubtitle(user)}</Text>
                 <View style={{ flexDirection: 'row', gap: 12, marginTop: 2 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-                    <Ionicons name={user.batteryLevel > 20 ? 'battery-half' : 'battery-dead'} size={13} color={BC(user.batteryLevel)} />
-                    <Text style={[s.meta, { color: BC(user.batteryLevel) }]}>{user.batteryLevel}%</Text>
+                    <Ionicons name={(user.batteryLevel ?? 0) > 20 ? 'battery-half' : 'battery-dead'} size={13} color={BC(user.batteryLevel ?? 0)} />
+                    <Text style={[s.meta, { color: BC(user.batteryLevel ?? 0) }]}>{user.batteryLevel ?? 0}%</Text>
                   </View>
                   <Text style={s.meta}>⏱ {user.locationUpdateFrequency ?? 5}dk</Text>
                 </View>
@@ -478,7 +512,7 @@ export default function MapScreen() {
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={s.modalTitle}>{selectedUser?.username}</Text>
-                <Text style={s.userHeroMeta}>{selectedUser?.email}</Text>
+                <Text style={s.userHeroMeta}>{selectedUser?.email || 'E-posta paylaşılmıyor'}</Text>
               </View>
             </View>
 
@@ -525,12 +559,12 @@ export default function MapScreen() {
                 <Text style={s.profileAvatarTxt}>{selectedUser?.username?.charAt(0).toUpperCase()}</Text>
               </View>
               <Text style={s.profileName}>{selectedUser?.username}</Text>
-              <Text style={s.profileMail}>{selectedUser?.email}</Text>
+              <Text style={s.profileMail}>{selectedUser?.email || 'E-posta paylaşılmıyor'}</Text>
             </View>
 
             <View style={s.profileStats}>
               <View style={s.profileStatCard}>
-                <Ionicons name="battery-half-outline" size={20} color={selectedUser ? BC(selectedUser.batteryLevel) : '#6d28d9'} />
+                <Ionicons name="battery-half-outline" size={20} color={selectedUser ? BC(selectedUser.batteryLevel ?? 0) : '#6d28d9'} />
                 <Text style={s.profileStatValue}>%{selectedUser?.batteryLevel ?? 0}</Text>
                 <Text style={s.profileStatLabel}>Pil</Text>
               </View>
@@ -540,8 +574,18 @@ export default function MapScreen() {
                 <Text style={s.profileStatLabel}>Sıklık</Text>
               </View>
               <View style={s.profileStatCard}>
-                <Ionicons name={selectedUser?.ghostMode ? 'eye-off-outline' : 'eye-outline'} size={20} color="#6d28d9" />
-                <Text style={s.profileStatValue}>{selectedUser?.ghostMode ? 'Gizli' : 'Açık'}</Text>
+                <Ionicons
+                  name={selectedUser?.locationVisibility === 'HIDDEN' ? 'eye-off-outline' : selectedUser?.locationVisibility === 'APPROXIMATE' ? 'navigate-outline' : 'eye-outline'}
+                  size={20}
+                  color="#6d28d9"
+                />
+                <Text style={s.profileStatValue}>
+                  {selectedUser?.locationVisibility === 'HIDDEN'
+                    ? 'Gizli'
+                    : selectedUser?.locationVisibility === 'APPROXIMATE'
+                      ? 'Yaklaşık'
+                      : 'Açık'}
+                </Text>
                 <Text style={s.profileStatLabel}>Görünürlük</Text>
               </View>
             </View>
@@ -549,8 +593,11 @@ export default function MapScreen() {
             <View style={s.profileDetailBox}>
               <Text style={s.profileDetailLabel}>Son Konum</Text>
               <Text style={s.profileDetailValue}>
-                {selectedUser ? (locationLabels[selectedUser.id] ?? 'Konum bilgisi hazırlanıyor') : 'Konum paylaşımı yok'}
+                {selectedUser ? getLocationSubtitle(selectedUser) : 'Konum paylaşımı yok'}
               </Text>
+              {selectedUser?.locationVisibility === 'APPROXIMATE' && selectedUser.locationRadiusKm ? (
+                <Text style={s.profileDetailHint}>Paylaşılan alan yarıçapı yaklaşık {selectedUser.locationRadiusKm.toFixed(1)} km</Text>
+              ) : null}
             </View>
 
             <View style={s.profileActionsRow}>
@@ -707,6 +754,7 @@ const s = StyleSheet.create({
   profileDetailBox: { backgroundColor: '#f9fafb', borderRadius: 16, padding: 16, marginBottom: 16 },
   profileDetailLabel: { fontSize: 12, fontWeight: '700', color: '#9ca3af', marginBottom: 6, textTransform: 'uppercase' },
   profileDetailValue: { fontSize: 15, fontWeight: '600', color: '#374151' },
+  profileDetailHint: { marginTop: 8, fontSize: 12, color: '#6b7280' },
   profileActionsRow: { flexDirection: 'row', gap: 10, marginBottom: 8 },
   profilePrimaryBtn: { flex: 1, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 6, backgroundColor: '#6d28d9', borderRadius: 14, paddingVertical: 14 },
   profilePrimaryBtnTxt: { color: '#fff', fontWeight: '800' },

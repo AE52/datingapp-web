@@ -8,7 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import * as Location from 'expo-location';
-import { API_BASE_URL, NOTIFICATIONS_API_URL, getStoredUser } from '@/api';
+import { API_BASE_URL, NOTIFICATIONS_API_URL, getStoredUser, logout, replaceStoredUser } from '@/api';
 
 const AVATAR_COLORS = ['#6d28d9', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#ec4899'];
 
@@ -27,8 +27,8 @@ export default function ProfileScreen() {
       const u = await getStoredUser();
       if (u) {
         setUser(u);
-        setGhostMode(u.ghostMode);
-        setBubbleEnabled(u.bubbleEnabled);
+        setGhostMode(u.ghostMode ?? false);
+        setBubbleEnabled(u.bubbleEnabled ?? false);
         setEditName(u.username);
         const saved = await AsyncStorage.getItem(`avatarColor_${u.id}`);
         if (saved) setAvatarColor(saved);
@@ -54,7 +54,7 @@ export default function ProfileScreen() {
         body: JSON.stringify({ ghostMode: val }),
       });
       const updated = { ...user, ghostMode: val };
-      await AsyncStorage.setItem('user', JSON.stringify(updated));
+      await replaceStoredUser(updated);
       setUser(updated);
     } catch (_) {}
   };
@@ -69,7 +69,7 @@ export default function ProfileScreen() {
       });
       if (res.ok) {
         const updated = { ...user, username: editName };
-        await AsyncStorage.setItem('user', JSON.stringify(updated));
+        await replaceStoredUser(updated);
         setUser(updated);
         setShowEdit(false);
         Alert.alert('✅', 'İsim güncellendi!');
@@ -110,7 +110,7 @@ export default function ProfileScreen() {
       });
       if (res.ok) {
         const updated = await res.json();
-        await AsyncStorage.setItem('user', JSON.stringify(updated));
+        await replaceStoredUser(updated);
         setUser(updated);
       }
     } catch {}
@@ -135,7 +135,7 @@ export default function ProfileScreen() {
   };
 
   const handleLogout = async () => {
-    await AsyncStorage.removeItem('user');
+    await logout();
     router.replace('/login');
   };
 

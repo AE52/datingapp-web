@@ -5,8 +5,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { API_BASE_URL, getStoredUser } from '@/api';
+import { API_BASE_URL, getStoredUser, replaceStoredUser } from '@/api';
 
 const PLACE_API = API_BASE_URL.replace('/users', '/places');
 
@@ -73,7 +72,7 @@ export default function PlacesScreen() {
       });
       if (res.ok) {
         const updated = await res.json();
-        await AsyncStorage.setItem('user', JSON.stringify(updated));
+        await replaceStoredUser(updated);
         Alert.alert('✅ Güncellendi', `Konum artık her ${freq} dakikada bir paylaşılıyor.`);
       }
     } catch (e) { console.log(e); }

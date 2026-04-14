@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, StyleSheet, TextInput, TouchableOpacity, FlatList,
-  KeyboardAvoidingView, Platform, SafeAreaView, Alert, ActionSheetIOS,
+  KeyboardAvoidingView, Platform, Alert, ActionSheetIOS,
   Modal, ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -9,6 +9,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { API_BASE_URL, getStoredUser } from '@/api';
 import { Audio } from 'expo-av';
 import * as ImagePicker from 'expo-image-picker';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 const CIRCLE_API = API_BASE_URL.replace('/users', '/circles');
 const CHAT_API   = API_BASE_URL.replace('/users', '/chat');

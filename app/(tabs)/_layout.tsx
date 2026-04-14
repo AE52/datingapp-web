@@ -1,13 +1,10 @@
-import { Tabs, router } from 'expo-router';
+import { Tabs } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 
-import { Colors } from '@/constants/Colors';
-import { useColorScheme } from '@/hooks/use-color-scheme';
 import { Ionicons } from '@expo/vector-icons';
 import { getStoredUser } from '@/api';
 
 export default function TabLayout() {
-  const colorScheme = useColorScheme();
   const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
