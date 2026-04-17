@@ -117,7 +117,7 @@ export default function SafetyScreen() {
     if (user) {
       try {
         await fetch(`${NOTIF_API}/sos/${user.id}?circleId=${circleId}`, { method: 'POST' });
-      } catch (_) {}
+      } catch {}
     }
     Alert.alert('🚨 SOS Tetiklendi!', 'Tüm grup üyelerine ve acil kişilerinize bildirim gönderildi.', [
       { text: 'Tamam', onPress: () => setSosActive(false) },

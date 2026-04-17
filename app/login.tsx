@@ -2,12 +2,23 @@ import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, Text, TextInput, TouchableOpacity, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import Constants from 'expo-constants';
 import { LinearGradient } from 'expo-linear-gradient';
 import { getStoredUser, login } from '@/api';
 
+const DEMO_EMAIL = 'eren@example.com';
+const DEMO_PASSWORD = 'VibeApp!2026';
+const showDemoCredentials = Boolean(
+  __DEV__
+  && Constants.expoConfig?.extra
+  && typeof Constants.expoConfig.extra === 'object'
+  && 'enableDemoLoginHints' in Constants.expoConfig.extra
+  && Constants.expoConfig.extra.enableDemoLoginHints === true,
+);
+
 export default function LoginScreen() {
-  const [email, setEmail] = useState('eren@example.com');
-  const [password, setPassword] = useState('VibeApp!2026');
+  const [email, setEmail] = useState(showDemoCredentials ? DEMO_EMAIL : '');
+  const [password, setPassword] = useState(showDemoCredentials ? DEMO_PASSWORD : '');
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -66,7 +77,7 @@ export default function LoginScreen() {
         <TouchableOpacity style={styles.loginButton} onPress={handleLogin} disabled={loading}>
           <Text style={styles.loginButtonText}>{loading ? 'Giriş yapılıyor...' : 'Giriş Yap'}</Text>
         </TouchableOpacity>
-        <Text style={styles.hint}>Demo hesap: eren@example.com / VibeApp!2026</Text>
+        {showDemoCredentials ? <Text style={styles.hint}>Demo hesap yerel geliştirme için dolduruldu.</Text> : null}
       </View>
     </SafeAreaView>
   );

@@ -29,7 +29,20 @@ function withOptionalCleartextPlugin(config: Partial<ExpoConfig>): Partial<ExpoC
     ...config,
     plugins: uniquePlugins([
       ...(config.plugins ?? []),
+      [
+        'expo-location',
+        {
+          isAndroidBackgroundLocationEnabled: true,
+          isIosBackgroundLocationEnabled: true,
+          locationWhenInUsePermission: 'Yakindaki kisileri ve yer bildirimlerini gosterebilmek icin konum kullanilir.',
+          locationAlwaysAndWhenInUsePermission: 'Arka planda guvenlik ve varis bildirimleri icin konum kullanilir.',
+        },
+      ],
       'expo-secure-store',
+      'expo-notifications',
+      'expo-asset',
+      'expo-audio',
+      'expo-video',
       './plugins/with-cleartext-traffic',
     ]),
   };
@@ -38,9 +51,50 @@ function withOptionalCleartextPlugin(config: Partial<ExpoConfig>): Partial<ExpoC
 export default ({ config }: ConfigContext): ExpoConfig => ({
   ...withOptionalCleartextPlugin({
     ...config,
+    extra: {
+      ...config.extra,
+      enableDemoLoginHints: process.env.EXPO_PUBLIC_ENABLE_DEMO_LOGIN === 'true',
+    },
+    ios: {
+      ...config.ios,
+      infoPlist: {
+        ...config.ios?.infoPlist,
+        NSCameraUsageDescription: 'Sesli ve goruntulu aramalar icin kameraya erisim gerekir.',
+        NSMicrophoneUsageDescription: 'Sesli ve goruntulu aramalar icin mikrofona erisim gerekir.',
+      },
+    },
+    android: {
+      ...config.android,
+      permissions: Array.from(
+        new Set([
+          ...(config.android?.permissions ?? []),
+          'CAMERA',
+          'RECORD_AUDIO',
+          'MODIFY_AUDIO_SETTINGS',
+          'FOREGROUND_SERVICE',
+          'FOREGROUND_SERVICE_MICROPHONE',
+          'FOREGROUND_SERVICE_MEDIA_PROJECTION',
+        ]),
+      ),
+    },
     plugins: uniquePlugins([
       ...(config.plugins ?? []),
+      'expo-dev-client',
+      [
+        'expo-location',
+        {
+          isAndroidBackgroundLocationEnabled: true,
+          isIosBackgroundLocationEnabled: true,
+          locationWhenInUsePermission: 'Yakindaki kisileri ve yer bildirimlerini gosterebilmek icin konum kullanilir.',
+          locationAlwaysAndWhenInUsePermission: 'Arka planda guvenlik ve varis bildirimleri icin konum kullanilir.',
+        },
+      ],
       'expo-secure-store',
+      'expo-notifications',
+      'expo-asset',
+      'expo-audio',
+      'expo-video',
+      '@config-plugins/react-native-webrtc',
     ]),
   }),
 }) as ExpoConfig;

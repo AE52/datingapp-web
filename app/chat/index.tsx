@@ -1,18 +1,16 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, SafeAreaView, Platform } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, SafeAreaView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { API_BASE_URL, getStoredUser } from '@/api';
 
 export default function ChatListScreen() {
   const [circles, setCircles] = useState<any[]>([]);
-  const [currentUser, setCurrentUser] = useState<any>(null);
 
   useEffect(() => {
     const loadUser = async () => {
       const u = await getStoredUser();
       if (u) {
-        setCurrentUser(u);
         fetchCircles(u.id);
       }
     };

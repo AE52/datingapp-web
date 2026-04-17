@@ -10,6 +10,7 @@ import { router } from 'expo-router';
 import Toast from 'react-native-toast-message';
 import AppMap, { AppMarker } from '@/components/AppMap';
 import { API_BASE_URL, NOTIFICATIONS_API_URL, getStoredUser, logout } from '@/api';
+import { sendForegroundLocationUpdate } from '@/lib/background-location';
 import * as Haptics from 'expo-haptics';
 import * as Location from 'expo-location';
 
@@ -91,13 +92,7 @@ export default function MapScreen() {
 
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status === 'granted') {
-        const loc = await Location.getCurrentPositionAsync({});
-        try {
-          await fetch(`${API_BASE_URL}/${u.id}/location`, {
-            method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ latitude: loc.coords.latitude, longitude: loc.coords.longitude }),
-          });
-        } catch {}
+        await sendForegroundLocationUpdate();
       }
     };
     init();
@@ -271,7 +266,10 @@ export default function MapScreen() {
   const openCall = () => {
     if (!selectedUser) return;
     closeUserSheets();
-    router.push({ pathname: '/(tabs)/call', params: { type: 'voice', circleName: selectedUser.username } } as any);
+    router.push({
+      pathname: '/(tabs)/call',
+      params: { type: 'voice', circleName: selectedUser.username, peerUserId: selectedUser.id.toString() },
+    } as any);
   };
 
   const openHistory = () => {

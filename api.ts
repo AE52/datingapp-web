@@ -361,7 +361,14 @@ async function requestWithTimeout(
 
 export const API_ORIGIN = resolveApiOrigin();
 export const API_BASE_URL = `${API_ORIGIN}/api/users`;
+export const CIRCLES_API_URL = `${API_ORIGIN}/api/circles`;
+export const CHAT_API_URL = `${API_ORIGIN}/api/chat`;
+export const CALLS_API_URL = `${API_ORIGIN}/api/calls`;
+export const LOCATIONS_API_URL = `${API_ORIGIN}/api/locations`;
+export const MEDIA_API_URL = `${API_ORIGIN}/api/media`;
 export const NOTIFICATIONS_API_URL = `${API_ORIGIN}/api/notifications`;
+export const PUSH_DEVICES_API_URL = `${API_ORIGIN}/api/push/devices`;
+export const SESSIONS_API_URL = `${API_ORIGIN}/api/sessions`;
 export const EMERGENCY_CONTACTS_API_URL = `${API_ORIGIN}/api/emergency-contacts`;
 export const MEDICAL_PROFILE_API_URL = `${API_ORIGIN}/api/medical-profile`;
 
@@ -425,6 +432,14 @@ export async function replaceStoredUser(user: AppUser) {
   await persistSession({ ...session, user });
 }
 
+export async function getSessionSnapshot(refresh = true): Promise<AuthSession | null> {
+  return refresh ? ensureFreshSession() : loadSession();
+}
+
+export async function getAccessToken(): Promise<string | null> {
+  return (await ensureFreshSession())?.token ?? null;
+}
+
 export async function getStoredUser(refresh = true): Promise<AppUser | null> {
   const session = await (refresh ? ensureFreshSession() : loadSession());
   if (!session) return null;
@@ -446,4 +461,17 @@ export async function getStoredUser(refresh = true): Promise<AppUser | null> {
   }
 
   return session.user;
+}
+
+export function buildWebSocketUrl(path: string, params: Record<string, string | number | null | undefined> = {}) {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  const socketProtocol = API_ORIGIN.startsWith('https://') ? 'wss://' : 'ws://';
+  const socketOrigin = API_ORIGIN.replace(/^https?:\/\//, socketProtocol);
+  const url = new URL(`${socketOrigin}${normalizedPath}`);
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== null && value !== undefined && `${value}`.trim() !== '') {
+      url.searchParams.set(key, String(value));
+    }
+  });
+  return url.toString();
 }

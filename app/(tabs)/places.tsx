@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useEffectEvent, useState } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
   SafeAreaView, Alert, Modal, TextInput, Platform
@@ -39,6 +39,16 @@ export default function PlacesScreen() {
   const [newLng, setNewLng] = useState('');
   const [savingPlaceId, setSavingPlaceId] = useState<number | null>(null);
 
+  const fetchPlaces = useEffectEvent(async () => {
+    try {
+      const res = await fetch(`${PLACE_API}/${circleId}`);
+      const data = await res.json();
+      setPlaces(data);
+    } catch (e) {
+      console.log('Yerler çekilemedi', e);
+    }
+  });
+
   useEffect(() => {
     const load = async () => {
       const u = await getStoredUser();
@@ -47,19 +57,9 @@ export default function PlacesScreen() {
         setSelectedFreq(u.locationUpdateFrequency || 5);
       }
     };
-    load();
-    fetchPlaces();
-  }, []);
-
-  const fetchPlaces = async () => {
-    try {
-      const res = await fetch(`${PLACE_API}/${circleId}`);
-      const data = await res.json();
-      setPlaces(data);
-    } catch (e) {
-      console.log('Yerler çekilemedi', e);
-    }
-  };
+    void load();
+    void fetchPlaces();
+  }, [circleId, fetchPlaces]);
 
   const handleFreqChange = async (freq: number) => {
     setSelectedFreq(freq);
@@ -91,8 +91,8 @@ export default function PlacesScreen() {
       });
       setShowAddModal(false);
       setNewName(''); setNewLat(''); setNewLng('');
-      fetchPlaces();
-    } catch (e) {
+      await fetchPlaces();
+    } catch {
       Alert.alert('Hata', 'Yer eklenemedi.');
     }
   };

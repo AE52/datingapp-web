@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useEffectEvent, useState } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -18,11 +18,7 @@ export default function HistoryScreen() {
   const [loading, setLoading] = useState(true);
   const [emptyMessage, setEmptyMessage] = useState('Henüz bir hareket kaydı yok.');
 
-  useEffect(() => {
-    fetchHistory();
-  }, [userId]);
-
-  const fetchHistory = async () => {
+  const fetchHistory = useEffectEvent(async () => {
     if (!userId) return;
     try {
       const res = await fetch(`${API_BASE_URL}/${userId}/history`);
@@ -42,7 +38,11 @@ export default function HistoryScreen() {
     } finally {
       setLoading(false);
     }
-  };
+  });
+
+  useEffect(() => {
+    void fetchHistory();
+  }, [fetchHistory, userId]);
 
   const renderItem = ({ item }: { item: HistoryItem }) => {
     const date = new Date(item.timestamp);

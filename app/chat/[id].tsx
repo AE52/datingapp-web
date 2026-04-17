@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useEffectEvent, useState } from 'react';
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, FlatList, KeyboardAvoidingView, Platform, SafeAreaView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -12,20 +12,7 @@ export default function ChatDetailScreen() {
   
   const CHAT_API = API_BASE_URL.replace('/users', '/chat');
 
-  useEffect(() => {
-    const loadData = async () => {
-      const user = await getStoredUser();
-      if (user) {
-        setCurrentUser(user);
-        fetchMessages();
-      }
-    };
-    loadData();
-    const interval = setInterval(fetchMessages, 5000); 
-    return () => clearInterval(interval);
-  }, []);
-
-  const fetchMessages = async () => {
+  const fetchMessages = useEffectEvent(async () => {
     try {
       const res = await fetch(`${CHAT_API}/${id}`);
       const data = await res.json();
@@ -33,7 +20,34 @@ export default function ChatDetailScreen() {
     } catch (e) {
       console.log('Mesajlar çekilemedi', e);
     }
-  };
+  });
+
+  useEffect(() => {
+    let active = true;
+
+    const loadData = async () => {
+      const user = await getStoredUser();
+      if (active && user) {
+        setCurrentUser(user);
+        await fetchMessages();
+      }
+    };
+    void loadData();
+
+    return () => {
+      active = false;
+    };
+  }, [fetchMessages, id]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const interval = setInterval(() => {
+      void fetchMessages();
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [currentUser, fetchMessages, id]);
 
   const sendMessage = async () => {
     if (inputText.trim() === '' || !currentUser) return;

@@ -1,125 +1,247 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  Switch, Alert, TextInput, Modal, Image,
+  ActivityIndicator,
+  Alert,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  TouchableOpacity,
+  useWindowDimensions,
+  View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { router } from 'expo-router';
 import * as Location from 'expo-location';
-import { API_BASE_URL, NOTIFICATIONS_API_URL, getStoredUser, logout, replaceStoredUser } from '@/api';
+import { router } from 'expo-router';
 
-const AVATAR_COLORS = ['#6d28d9', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#ec4899'];
+import { API_BASE_URL, CIRCLES_API_URL, NOTIFICATIONS_API_URL, getStoredUser, logout, replaceStoredUser, type AppUser } from '@/api';
+import { listSessions, revokeAllSessions, revokeSession, type SessionView, updateSessionTrust } from '@/lib/account-security';
+import {
+  getBackgroundLocationDiagnostics,
+  isBackgroundTrackingEnabled,
+  sendForegroundLocationUpdate,
+  startBackgroundTracking,
+  stopBackgroundTracking,
+} from '@/lib/background-location';
+import {
+  listPushDevices,
+  registerPushDevice,
+  revokePushDevice,
+  type PushDeviceView,
+  updatePushDeviceTrust,
+} from '@/lib/push';
+
+const FREQUENCY_PRESETS = [1, 5, 10, 30];
 
 export default function ProfileScreen() {
-  const [user, setUser] = useState<any>(null);
-  const [ghostMode, setGhostMode] = useState(false);
-  const [editName, setEditName] = useState('');
-  const [showEdit, setShowEdit] = useState(false);
-  const [avatarColor, setAvatarColor] = useState('#6d28d9');
-  const [showColorPicker, setShowColorPicker] = useState(false);
-  const [bubbleEnabled, setBubbleEnabled] = useState(false);
+  const { width } = useWindowDimensions();
+  const isWide = width >= 960;
+  const [user, setUser] = useState<AppUser | null>(null);
   const [circleId, setCircleId] = useState<number>(1);
+  const [ghostMode, setGhostMode] = useState(false);
+  const [bubbleEnabled, setBubbleEnabled] = useState(false);
+  const [backgroundTracking, setBackgroundTracking] = useState(false);
+  const [backgroundDiagnostics, setBackgroundDiagnostics] = useState<{
+    enabled: boolean;
+    started: boolean;
+    queueSize: number;
+    taskManagerAvailable: boolean;
+  } | null>(null);
+  const [pushDevices, setPushDevices] = useState<PushDeviceView[]>([]);
+  const [sessions, setSessions] = useState<SessionView[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState<string | null>(null);
 
   useEffect(() => {
     const load = async () => {
-      const u = await getStoredUser();
-      if (u) {
-        setUser(u);
-        setGhostMode(u.ghostMode ?? false);
-        setBubbleEnabled(u.bubbleEnabled ?? false);
-        setEditName(u.username);
-        const saved = await AsyncStorage.getItem(`avatarColor_${u.id}`);
-        if (saved) setAvatarColor(saved);
-        try {
-          const circlesRes = await fetch(`${API_BASE_URL.replace('/users', '/circles')}/user/${u.id}`);
-          const circles = await circlesRes.json();
-          if (Array.isArray(circles) && circles[0]?.id) {
-            setCircleId(circles[0].id);
-          }
-        } catch {}
+      const nextUser = await getStoredUser();
+      if (!nextUser) {
+        router.replace('/login');
+        return;
       }
+
+      setUser(nextUser);
+      setGhostMode(Boolean(nextUser.ghostMode));
+      setBubbleEnabled(Boolean(nextUser.bubbleEnabled));
+      setBackgroundTracking(await isBackgroundTrackingEnabled());
+      setBackgroundDiagnostics(await getBackgroundLocationDiagnostics());
+
+      try {
+        const circlesResponse = await fetch(`${CIRCLES_API_URL}/user/${nextUser.id}`);
+        const circles = await circlesResponse.json() as { id?: number }[];
+        if (Array.isArray(circles) && circles[0]?.id) {
+          setCircleId(circles[0].id);
+        }
+      } catch {
+      }
+
+      await Promise.allSettled([refreshSecurityData(), sendForegroundLocationUpdate()]);
+      setLoading(false);
     };
+
     load();
   }, []);
 
-  const toggleGhostMode = async (val: boolean) => {
-    setGhostMode(val);
-    if (!user) return;
+  const hasAnyPushDevice = useMemo(
+    () => pushDevices.some((device) => device.notificationsEnabled),
+    [pushDevices],
+  );
+
+  const refreshBackgroundDiagnostics = async () => {
+    setBackgroundDiagnostics(await getBackgroundLocationDiagnostics());
+  };
+
+  const refreshSecurityData = async () => {
+    const [devicesResult, sessionsResult] = await Promise.allSettled([listPushDevices(), listSessions()]);
+
+    if (devicesResult.status === 'fulfilled') {
+      setPushDevices(devicesResult.value);
+    }
+    if (sessionsResult.status === 'fulfilled') {
+      setSessions(sessionsResult.value);
+    }
+  };
+
+  const withSaving = async (key: string, action: () => Promise<void>) => {
+    setSaving(key);
     try {
-      await fetch(`${API_BASE_URL}/${user.id}/ghost`, {
+      await action();
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  const persistUserUpdate = async (nextUser: AppUser) => {
+    setUser(nextUser);
+    await replaceStoredUser(nextUser);
+  };
+
+  const toggleGhostMode = async (value: boolean) => {
+    if (!user) return;
+    setGhostMode(value);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/${user.id}/ghost`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ghostMode: val }),
+        body: JSON.stringify({ ghostMode: value }),
       });
-      const updated = { ...user, ghostMode: val };
-      await replaceStoredUser(updated);
-      setUser(updated);
-    } catch (_) {}
+      if (!response.ok) throw new Error('Hayalet modu guncellenemedi.');
+      await persistUserUpdate(await response.json() as AppUser);
+    } catch (error) {
+      setGhostMode(!value);
+      Alert.alert('Hata', error instanceof Error ? error.message : 'Hayalet modu guncellenemedi.');
+    }
   };
 
-  const saveEditName = async () => {
-    if (!user || !editName.trim()) return;
-    try {
-      const res = await fetch(`${API_BASE_URL}/${user.id}/name`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: editName }),
-      });
-      if (res.ok) {
-        const updated = { ...user, username: editName };
-        await replaceStoredUser(updated);
-        setUser(updated);
-        setShowEdit(false);
-        Alert.alert('✅', 'İsim güncellendi!');
-      }
-    } catch (_) { Alert.alert('Hata', 'Güncellenemedi.'); }
-  };
-
-  const pickColor = async (color: string) => {
-    setAvatarColor(color);
-    if (user) await AsyncStorage.setItem(`avatarColor_${user.id}`, color);
-    setShowColorPicker(false);
-  };
-
-  const toggleBubbleMode = async (val: boolean) => {
+  const toggleBubbleMode = async (value: boolean) => {
     if (!user) return;
-    setBubbleEnabled(val);
+    setBubbleEnabled(value);
+
     try {
       let latitude = user.latitude;
       let longitude = user.longitude;
-      if (val) {
+      if (value) {
         const permission = await Location.requestForegroundPermissionsAsync();
-        if (permission.status === 'granted') {
-          const current = await Location.getCurrentPositionAsync({});
-          latitude = current.coords.latitude;
-          longitude = current.coords.longitude;
+        if (!permission.granted) {
+          throw new Error('Bubble modu icin konum izni gerekli.');
         }
+
+        const position = await Location.getCurrentPositionAsync({});
+        latitude = position.coords.latitude;
+        longitude = position.coords.longitude;
       }
-      const res = await fetch(`${API_BASE_URL}/${user.id}/bubble`, {
+
+      const response = await fetch(`${API_BASE_URL}/${user.id}/bubble`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          enabled: val,
+          enabled: value,
           latitude,
           longitude,
           radiusKm: 0.8,
-          durationMinutes: val ? 120 : 0,
+          durationMinutes: value ? 120 : 0,
         }),
       });
-      if (res.ok) {
-        const updated = await res.json();
-        await replaceStoredUser(updated);
-        setUser(updated);
+      if (!response.ok) {
+        throw new Error('Bubble modu guncellenemedi.');
       }
-    } catch {}
+      await persistUserUpdate(await response.json() as AppUser);
+    } catch (error) {
+      setBubbleEnabled(!value);
+      Alert.alert('Hata', error instanceof Error ? error.message : 'Bubble modu guncellenemedi.');
+    }
+  };
+
+  const updateFrequency = async (frequency: number) => {
+    if (!user) return;
+    await withSaving(`freq-${frequency}`, async () => {
+      const response = await fetch(`${API_BASE_URL}/${user.id}/frequency`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ frequency }),
+      });
+      if (!response.ok) {
+        throw new Error('Konum guncelleme sikligi kaydedilemedi.');
+      }
+      const nextUser = await response.json() as AppUser;
+      await persistUserUpdate(nextUser);
+      if (backgroundTracking) {
+        await startBackgroundTracking(nextUser.locationUpdateFrequency ?? frequency);
+      }
+    }).catch((error) => {
+      Alert.alert('Hata', error instanceof Error ? error.message : 'Konum guncelleme sikligi kaydedilemedi.');
+    });
+  };
+
+  const toggleNotifications = async (value: boolean) => {
+    if (!user) return;
+
+    await withSaving('notifications', async () => {
+      if (value) {
+        await registerPushDevice(user, backgroundTracking);
+      } else {
+        await Promise.all(pushDevices.map((device) => revokePushDevice(device.id)));
+      }
+      await refreshSecurityData();
+      await refreshBackgroundDiagnostics();
+    }).catch((error) => {
+      Alert.alert('Hata', error instanceof Error ? error.message : 'Bildirim ayari guncellenemedi.');
+    });
+  };
+
+  const toggleBackgroundTracking = async (value: boolean) => {
+    if (!user) return;
+
+    setBackgroundTracking(value);
+    try {
+      if (value) {
+        await startBackgroundTracking(user.locationUpdateFrequency ?? 5);
+        await sendForegroundLocationUpdate();
+        if (!hasAnyPushDevice) {
+          await registerPushDevice(user, true);
+        } else {
+          await registerPushDevice(user, true);
+        }
+      } else {
+        await stopBackgroundTracking();
+        if (hasAnyPushDevice) {
+          await registerPushDevice(user, false);
+        }
+      }
+      await refreshSecurityData();
+      await refreshBackgroundDiagnostics();
+    } catch (error) {
+      setBackgroundTracking(!value);
+      Alert.alert('Hata', error instanceof Error ? error.message : 'Arka plan takibi guncellenemedi.');
+    }
   };
 
   const sendLowBatteryAlert = async () => {
     if (!user) return;
     try {
-      await fetch(`${NOTIFICATIONS_API_URL}/low-battery`, {
+      const response = await fetch(`${NOTIFICATIONS_API_URL}/low-battery`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -128,10 +250,21 @@ export default function ProfileScreen() {
           batteryLevel: user.batteryLevel ?? 15,
         }),
       });
-      Alert.alert('Bildirim gonderildi', 'Dusuk pil uyarisini cevrendeki uyelere ilettik.');
-    } catch {
-      Alert.alert('Hata', 'Dusuk pil uyarisi gonderilemedi.');
+      if (!response.ok) throw new Error('Dusuk pil uyarisi gonderilemedi.');
+      Alert.alert('Gonderildi', 'Dusuk pil uyarisi circle uyelerine iletildi.');
+    } catch (error) {
+      Alert.alert('Hata', error instanceof Error ? error.message : 'Dusuk pil uyarisi gonderilemedi.');
     }
+  };
+
+  const handleLogoutAll = async () => {
+    await withSaving('logout-all', async () => {
+      await revokeAllSessions();
+      await logout();
+      router.replace('/login');
+    }).catch((error) => {
+      Alert.alert('Hata', error instanceof Error ? error.message : 'Tum oturumlar kapatilamadi.');
+    });
   };
 
   const handleLogout = async () => {
@@ -139,220 +272,368 @@ export default function ProfileScreen() {
     router.replace('/login');
   };
 
-  if (!user) return null;
-
-  const STATS = [
-    { label: 'Toplam Mesaj', value: '248', icon: 'chatbubble' },
-    { label: 'SOS Gönderildi', value: '0', icon: 'alert-circle' },
-    { label: 'Aktif Grup', value: '4', icon: 'people' },
-  ];
+  if (!user || loading) {
+    return (
+      <View style={styles.loadingScreen}>
+        <ActivityIndicator size="large" color="#6d28d9" />
+      </View>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
-      <ScrollView contentContainerStyle={{ paddingBottom: 50 }}>
-        {/* Header */}
+      <ScrollView contentContainerStyle={styles.content}>
+        <View style={[styles.shell, isWide && styles.shellWide]}>
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>Profilim</Text>
-          <TouchableOpacity style={styles.editBtn} onPress={() => setShowEdit(true)}>
-            <Ionicons name="pencil" size={18} color="#6d28d9" />
-          </TouchableOpacity>
-        </View>
-
-        {/* Avatar */}
-        <View style={styles.avatarSection}>
-          <TouchableOpacity onPress={() => setShowColorPicker(true)}>
-            <View style={[styles.avatar, { backgroundColor: avatarColor }]}>
-              <Text style={styles.avatarText}>{user.username.charAt(0).toUpperCase()}</Text>
-              <View style={styles.avatarEditBadge}>
-                <Ionicons name="color-palette" size={14} color="#fff" />
-              </View>
-            </View>
-          </TouchableOpacity>
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>{user.username.charAt(0).toUpperCase()}</Text>
+          </View>
           <Text style={styles.name}>{user.username}</Text>
           <Text style={styles.email}>{user.email}</Text>
           {user.admin && (
-            <View style={styles.adminBadge}>
+            <View style={styles.badge}>
               <Ionicons name="shield-checkmark" size={14} color="#6d28d9" />
-              <Text style={styles.adminBadgeText}>Yönetici</Text>
+              <Text style={styles.badgeText}>Yonetici</Text>
             </View>
           )}
         </View>
 
-        {/* Vibe Gamification */}
-        <View style={styles.gamery}>
-           <View style={styles.gameTop}>
-              <Text style={styles.levelTxt}>Vibe Seviyesi: 12</Text>
-              <Text style={styles.rankTxt}>Gümüş Üye</Text>
-           </View>
-           <View style={styles.progressFull}>
-              <View style={[styles.progressCurrent, { width: '65%' }]} />
-           </View>
-           <Text style={styles.xpTxt}>Sonraki seviyeye 340 XP kaldı</Text>
-        </View>
-
-        {/* Stats */}
-        <View style={styles.statsRow}>
-          {STATS.map(st => (
-            <View key={st.label} style={styles.statCard}>
-              <Ionicons name={st.icon as any} size={22} color="#6d28d9" />
-              <Text style={styles.statValue}>{st.value}</Text>
-              <Text style={styles.statLabel}>{st.label}</Text>
-            </View>
-          ))}
-        </View>
-
-        {/* Battery */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Cihaz Durumu</Text>
-          <View style={styles.row}>
-            <Ionicons name="battery-half-outline" size={22} color="#10b981" />
-            <Text style={styles.rowLabel}>Pil Seviyesi</Text>
-            <Text style={styles.rowValue}>{user.batteryLevel ?? 100}%</Text>
-          </View>
-          <View style={styles.progressBg}>
-            <View style={[styles.progressBar, { width: `${user.batteryLevel ?? 100}%`, backgroundColor: user.batteryLevel > 50 ? '#10b981' : user.batteryLevel > 20 ? '#f59e0b' : '#ef4444' }]} />
-          </View>
-          <View style={styles.row}>
-            <Ionicons name="time-outline" size={22} color="#6d28d9" />
-            <Text style={styles.rowLabel}>Konum Güncelleme</Text>
-            <Text style={styles.rowValue}>{user.locationUpdateFrequency ?? 5} dk</Text>
-          </View>
-        </View>
-
-        {/* Apple Watch Integration */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Apple Watch Entegrasyonu</Text>
-          <View style={styles.row}>
-            <Ionicons name="watch-outline" size={22} color="#10b981" />
-            <Text style={styles.rowLabel}>Apple Watch ile Bağla</Text>
-            <Switch value={true} trackColor={{ true: '#10b981', false: '#eee' }} />
-          </View>
-          <TouchableOpacity style={styles.watchBtn} onPress={() => Alert.alert('Watch Preview', 'Saatinde şu an: \n📍 Evdesin \n🔋 Pil %88 \n🚨 SOS Aktif')}>
-            <Ionicons name="eye-outline" size={18} color="#6d28d9" />
-            <Text style={styles.watchBtnText}>Saat Görünümünü Önizle</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Gizlilik */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Gizlilik</Text>
-          <View style={styles.row}>
-            <Ionicons name="eye-off-outline" size={22} color="#9ca3af" />
-            <Text style={styles.rowLabel}>Hayalet Modu</Text>
-            <Switch value={ghostMode} onValueChange={toggleGhostMode} trackColor={{ true: '#6d28d9', false: '#e5e7eb' }} />
-          </View>
-          <View style={styles.row}>
-            <Ionicons name="radio-outline" size={22} color="#0ea5e9" />
-            <Text style={styles.rowLabel}>Bubble Konumu</Text>
-            <Switch value={bubbleEnabled} onValueChange={toggleBubbleMode} trackColor={{ true: '#0ea5e9', false: '#e5e7eb' }} />
-          </View>
-          <Text style={styles.hint}>Hayalet modundayken konumunuz gizlenir.</Text>
-        </View>
-
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Guvenlik Bildirimleri</Text>
-          <TouchableOpacity style={styles.watchBtn} onPress={sendLowBatteryAlert}>
+        <Section title="Durum">
+          <Row icon="battery-half-outline" label="Pil seviyesi" value={`${user.batteryLevel ?? 100}%`} />
+          <Row icon="location-outline" label="Konum paylasimi" value={user.locationVisibility ?? 'UNAVAILABLE'} />
+          <TouchableOpacity style={styles.actionButton} onPress={sendLowBatteryAlert}>
             <Ionicons name="battery-dead-outline" size={18} color="#ef4444" />
-            <Text style={[styles.watchBtnText, { color: '#ef4444' }]}>Dusuk pil uyarisi gonder</Text>
+            <Text style={[styles.actionButtonText, { color: '#ef4444' }]}>Dusuk pil uyarisini circle ile paylas</Text>
           </TouchableOpacity>
-        </View>
+        </Section>
 
-        {/* Tehlike Bölgesi */}
-        <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: '#ef4444' }]}>Tehlike Bölgesi</Text>
-          <TouchableOpacity style={styles.dangerBtn} onPress={() => Alert.alert('Hesap Silinsin mi?', 'Bu işlem geri alınamaz!', [{ text: 'Vazgeç', style: 'cancel' }, { text: 'Sil', style: 'destructive' }])}>
-            <Ionicons name="trash-outline" size={20} color="#ef4444" />
-            <Text style={styles.dangerBtnText}>Hesabımı Sil</Text>
+        <Section title="Gizlilik">
+          <ToggleRow icon="eye-off-outline" label="Hayalet modu" value={ghostMode} onValueChange={toggleGhostMode} />
+          <ToggleRow icon="radio-outline" label="Bubble konumu" value={bubbleEnabled} onValueChange={toggleBubbleMode} />
+          <Text style={styles.hint}>Hayalet modu exact konumu gizler. Bubble modu yaklaşık güvenli alan paylaşır.</Text>
+        </Section>
+
+        <Section title="Canli Teslimat">
+          <ToggleRow
+            icon="notifications-outline"
+            label="Push bildirimleri"
+            value={hasAnyPushDevice}
+            onValueChange={toggleNotifications}
+            busy={saving === 'notifications'}
+          />
+          <ToggleRow
+            icon="navigate-outline"
+            label="Arka plan konum takibi"
+            value={backgroundTracking}
+            onValueChange={toggleBackgroundTracking}
+          />
+          <Text style={styles.hint}>Arka plan takibi Expo Go&apos;da sinirlidir; development build uzerinde calisir.</Text>
+        </Section>
+
+        <Section title="Teslimat Diagnostigi">
+          <Row icon="pulse-outline" label="TaskManager" value={backgroundDiagnostics?.taskManagerAvailable ? 'Hazir' : 'Yok'} />
+          <Row icon="navigate-outline" label="Arka plan aktif" value={backgroundDiagnostics?.started ? 'Calisiyor' : 'Beklemede'} />
+          <Row icon="cloud-upload-outline" label="Kuyruktaki olay" value={String(backgroundDiagnostics?.queueSize ?? 0)} />
+          <Text style={styles.hint}>
+            Fiziksel cihaz development build&apos;inde TaskManager hazir ve kuyruk sifira yakin kalmali. Kuyruk buyurse ag veya izin sorunu vardir.
+          </Text>
+        </Section>
+
+        <Section title="Konum Sikligi">
+          <View style={styles.chipRow}>
+            {FREQUENCY_PRESETS.map((preset) => {
+              const active = (user.locationUpdateFrequency ?? 5) === preset;
+              return (
+                <TouchableOpacity
+                  key={preset}
+                  style={[styles.chip, active && styles.chipActive]}
+                  onPress={() => updateFrequency(preset)}
+                  disabled={saving === `freq-${preset}`}
+                >
+                  <Text style={[styles.chipText, active && styles.chipTextActive]}>
+                    {saving === `freq-${preset}` ? '...' : `${preset} dk`}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </Section>
+
+        <Section title="Trusted Devices">
+          {pushDevices.length === 0 ? (
+            <EmptyState text="Kayitli push cihazı yok." />
+          ) : (
+            pushDevices.map((device) => (
+              <SecurityCard
+                key={`push-${device.id}`}
+                title={device.deviceName || `${device.platform} cihaz`}
+                subtitle={`${device.provider.toUpperCase()} • ${device.appVersion ?? 'dev'} • ${device.lastDeliveryStatus ?? 'hazir'}`}
+                trusted={device.trusted}
+                onTrustChange={(value) => withSaving(`push-${device.id}`, async () => {
+                  await updatePushDeviceTrust(device.id, value);
+                  await refreshSecurityData();
+                }).catch((error) => Alert.alert('Hata', error instanceof Error ? error.message : 'Cihaz guncellenemedi.'))}
+                onRevoke={() => withSaving(`push-revoke-${device.id}`, async () => {
+                  await revokePushDevice(device.id);
+                  await refreshSecurityData();
+                }).catch((error) => Alert.alert('Hata', error instanceof Error ? error.message : 'Cihaz kaldirilamadi.'))}
+                busy={saving === `push-${device.id}` || saving === `push-revoke-${device.id}`}
+              />
+            ))
+          )}
+        </Section>
+
+        <Section title="Active Sessions">
+          {sessions.length === 0 ? (
+            <EmptyState text="Aktif refresh session yok." />
+          ) : (
+            sessions.map((session) => (
+              <SecurityCard
+                key={`session-${session.id}`}
+                title={session.deviceLabel || session.userAgent || `Session #${session.id}`}
+                subtitle={`${session.ipAddress ?? 'IP yok'} • son kullanim ${formatDate(session.lastUsedAt ?? session.createdAt)}`}
+                trusted={session.trusted}
+                onTrustChange={(value) => withSaving(`session-${session.id}`, async () => {
+                  await updateSessionTrust(session.id, value);
+                  await refreshSecurityData();
+                }).catch((error) => Alert.alert('Hata', error instanceof Error ? error.message : 'Session guncellenemedi.'))}
+                onRevoke={() => withSaving(`session-revoke-${session.id}`, async () => {
+                  await revokeSession(session.id);
+                  await refreshSecurityData();
+                }).catch((error) => Alert.alert('Hata', error instanceof Error ? error.message : 'Session kapatilamadi.'))}
+                busy={saving === `session-${session.id}` || saving === `session-revoke-${session.id}`}
+              />
+            ))
+          )}
+
+          <TouchableOpacity style={styles.dangerButton} onPress={handleLogoutAll} disabled={saving === 'logout-all'}>
+            <Ionicons name="shield-outline" size={18} color="#ef4444" />
+            <Text style={styles.dangerButtonText}>
+              {saving === 'logout-all' ? 'Tum oturumlar kapatiliyor...' : 'Tum oturumlari kapat'}
+            </Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
-            <Ionicons name="log-out-outline" size={20} color="#6d28d9" />
-            <Text style={styles.logoutBtnText}>Çıkış Yap</Text>
+        </Section>
+
+        <Section title="Hesap">
+          <TouchableOpacity style={styles.secondaryButton} onPress={handleLogout}>
+            <Ionicons name="log-out-outline" size={18} color="#6d28d9" />
+            <Text style={styles.secondaryButtonText}>Cikis yap</Text>
           </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.secondaryButton}
+            onPress={() => Alert.alert('Beklemede', 'Hesap silme akisini once son onay + audit log ile baglayacagim.')}
+          >
+            <Ionicons name="trash-outline" size={18} color="#ef4444" />
+            <Text style={[styles.secondaryButtonText, { color: '#ef4444' }]}>Hesabi sil</Text>
+          </TouchableOpacity>
+        </Section>
         </View>
       </ScrollView>
-
-      {/* Edit Name Modal */}
-      <Modal visible={showEdit} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalBox}>
-            <Text style={styles.modalTitle}>İsim Değiştir</Text>
-            <TextInput style={styles.modalInput} value={editName} onChangeText={setEditName} placeholder="Yeni isim" placeholderTextColor="#9ca3af" />
-            <View style={styles.modalBtns}>
-              <TouchableOpacity style={styles.modalCancel} onPress={() => setShowEdit(false)}><Text style={styles.modalCancelTxt}>Vazgeç</Text></TouchableOpacity>
-              <TouchableOpacity style={styles.modalOk} onPress={saveEditName}><Text style={styles.modalOkTxt}>Kaydet</Text></TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Color Picker Modal */}
-      <Modal visible={showColorPicker} transparent animationType="fade">
-        <TouchableOpacity style={styles.modalOverlay} onPress={() => setShowColorPicker(false)}>
-          <View style={styles.colorPickerBox}>
-            <Text style={styles.modalTitle}>Avatar Rengi</Text>
-            <View style={styles.colorGrid}>
-              {AVATAR_COLORS.map(c => (
-                <TouchableOpacity key={c} onPress={() => pickColor(c)}>
-                  <View style={[styles.colorCircle, { backgroundColor: c }, avatarColor === c && styles.colorCircleSelected]} />
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-        </TouchableOpacity>
-      </Modal>
     </SafeAreaView>
   );
 }
 
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <View style={styles.section}>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      {children}
+    </View>
+  );
+}
+
+function Row({ icon, label, value }: { icon: keyof typeof Ionicons.glyphMap; label: string; value: string }) {
+  return (
+    <View style={styles.row}>
+      <Ionicons name={icon} size={20} color="#6d28d9" />
+      <Text style={styles.rowLabel}>{label}</Text>
+      <Text style={styles.rowValue}>{value}</Text>
+    </View>
+  );
+}
+
+function ToggleRow({
+  icon,
+  label,
+  value,
+  onValueChange,
+  busy,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  value: boolean;
+  onValueChange: (value: boolean) => void;
+  busy?: boolean;
+}) {
+  return (
+    <View style={styles.row}>
+      <Ionicons name={icon} size={20} color="#6d28d9" />
+      <Text style={styles.rowLabel}>{label}</Text>
+      {busy ? (
+        <ActivityIndicator size="small" color="#6d28d9" />
+      ) : (
+        <Switch value={value} onValueChange={onValueChange} trackColor={{ true: '#6d28d9', false: '#d1d5db' }} />
+      )}
+    </View>
+  );
+}
+
+function SecurityCard({
+  title,
+  subtitle,
+  trusted,
+  onTrustChange,
+  onRevoke,
+  busy,
+}: {
+  title: string;
+  subtitle: string;
+  trusted: boolean;
+  onTrustChange: (value: boolean) => void;
+  onRevoke: () => void;
+  busy?: boolean;
+}) {
+  return (
+    <View style={styles.securityCard}>
+      <View style={{ flex: 1, gap: 4 }}>
+        <Text style={styles.securityTitle}>{title}</Text>
+        <Text style={styles.securitySubtitle}>{subtitle}</Text>
+      </View>
+      <View style={styles.securityActions}>
+        <Switch value={trusted} onValueChange={onTrustChange} trackColor={{ true: '#0ea5e9', false: '#d1d5db' }} disabled={busy} />
+        <TouchableOpacity style={styles.revokeChip} onPress={onRevoke} disabled={busy}>
+          {busy ? <ActivityIndicator size="small" color="#ef4444" /> : <Text style={styles.revokeChipText}>Kaldir</Text>}
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
+function EmptyState({ text }: { text: string }) {
+  return (
+    <View style={styles.emptyCard}>
+      <Text style={styles.emptyText}>{text}</Text>
+    </View>
+  );
+}
+
+function formatDate(value: string) {
+  return new Date(value).toLocaleString('tr-TR', {
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f8f8fb' },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 24, paddingVertical: 16 },
-  headerTitle: { fontSize: 28, fontWeight: '900', color: '#111' },
-  editBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: '#ede9fe', justifyContent: 'center', alignItems: 'center' },
-  avatarSection: { alignItems: 'center', paddingVertical: 24 },
-  avatar: { width: 100, height: 100, borderRadius: 50, justifyContent: 'center', alignItems: 'center', marginBottom: 12 },
-  avatarText: { fontSize: 44, fontWeight: '900', color: '#fff' },
-  avatarEditBadge: { position: 'absolute', bottom: 2, right: 2, width: 24, height: 24, borderRadius: 12, backgroundColor: '#374151', justifyContent: 'center', alignItems: 'center' },
-  name: { fontSize: 24, fontWeight: '800', color: '#111', marginBottom: 4 },
-  email: { fontSize: 15, color: '#6b7280' },
-  adminBadge: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 10, backgroundColor: '#ede9fe', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 12 },
-  adminBadgeText: { fontSize: 13, fontWeight: '700', color: '#6d28d9' },
-  gamery: { backgroundColor: '#fff', marginHorizontal: 20, borderRadius: 20, padding: 20, marginBottom: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 6, elevation: 2 },
-  gameTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  levelTxt: { fontSize: 16, fontWeight: '800', color: '#111' },
-  rankTxt: { fontSize: 13, fontWeight: '700', color: '#6d28d9' },
-  progressFull: { height: 10, backgroundColor: '#f3f4f6', borderRadius: 5, overflow: 'hidden', marginBottom: 8 },
-  progressCurrent: { height: 10, backgroundColor: '#6d28d9', borderRadius: 5 },
-  xpTxt: { fontSize: 11, color: '#9ca3af', textAlign: 'center' },
-  statsRow: { flexDirection: 'row', marginHorizontal: 20, gap: 12, marginBottom: 20 },
-  statCard: { flex: 1, backgroundColor: '#fff', borderRadius: 16, padding: 14, alignItems: 'center', gap: 6, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 6, elevation: 2 },
-  statValue: { fontSize: 22, fontWeight: '800', color: '#111' },
-  statLabel: { fontSize: 11, color: '#9ca3af', textAlign: 'center' },
-  section: { backgroundColor: '#fff', marginHorizontal: 20, borderRadius: 20, padding: 18, marginBottom: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 6, elevation: 2 },
-  sectionTitle: { fontSize: 16, fontWeight: '800', color: '#111', marginBottom: 14 },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 10 },
-  rowLabel: { flex: 1, fontSize: 15, color: '#374151' },
-  rowValue: { fontSize: 15, fontWeight: '700', color: '#6d28d9' },
-  progressBg: { height: 8, backgroundColor: '#f3f4f6', borderRadius: 4, marginBottom: 14, overflow: 'hidden' },
-  progressBar: { height: 8, borderRadius: 4 },
-  watchBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12, padding: 10, borderRadius: 12, backgroundColor: '#f0fdf4', borderStyle: 'dashed', borderWidth: 1, borderColor: '#10b981' },
-  watchBtnText: { fontSize: 13, fontWeight: '700', color: '#10b981' },
-  hint: { fontSize: 12, color: '#9ca3af', marginTop: -6 },
-  dangerBtn: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 14, borderRadius: 12, borderWidth: 1.5, borderColor: '#fecaca', backgroundColor: '#fef2f2', marginBottom: 10 },
-  dangerBtnText: { fontSize: 15, fontWeight: '700', color: '#ef4444' },
-  logoutBtn: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 14, borderRadius: 12, backgroundColor: '#ede9fe' },
-  logoutBtnText: { fontSize: 15, fontWeight: '700', color: '#6d28d9' },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
-  modalBox: { backgroundColor: '#fff', borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 24, paddingBottom: 36 },
-  colorPickerBox: { backgroundColor: '#fff', margin: 30, borderRadius: 24, padding: 24 },
-  modalTitle: { fontSize: 20, fontWeight: '800', color: '#111', marginBottom: 18 },
-  modalInput: { backgroundColor: '#f3f4f6', padding: 14, borderRadius: 12, fontSize: 16, color: '#111', marginBottom: 16 },
-  modalBtns: { flexDirection: 'row', gap: 12 },
-  modalCancel: { flex: 1, padding: 14, borderRadius: 12, backgroundColor: '#f3f4f6', alignItems: 'center' },
-  modalCancelTxt: { fontWeight: '700', color: '#374151' },
-  modalOk: { flex: 1, padding: 14, borderRadius: 12, backgroundColor: '#6d28d9', alignItems: 'center' },
-  modalOkTxt: { fontWeight: '700', color: '#fff' },
-  colorGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 16, justifyContent: 'center' },
-  colorCircle: { width: 52, height: 52, borderRadius: 26 },
-  colorCircleSelected: { borderWidth: 4, borderColor: '#111' },
+  container: { flex: 1, backgroundColor: '#f5f3ff' },
+  loadingScreen: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f5f3ff' },
+  content: { padding: 20, paddingBottom: 48, alignItems: 'center' },
+  shell: { width: '100%', gap: 18 },
+  shellWide: { maxWidth: 1040 },
+  header: { alignItems: 'center', gap: 8, paddingTop: 8 },
+  avatar: {
+    width: 84,
+    height: 84,
+    borderRadius: 42,
+    backgroundColor: '#6d28d9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarText: { fontSize: 34, fontWeight: '900', color: '#fff' },
+  name: { fontSize: 26, fontWeight: '800', color: '#111827' },
+  email: { fontSize: 14, color: '#6b7280' },
+  badge: {
+    flexDirection: 'row',
+    gap: 6,
+    alignItems: 'center',
+    backgroundColor: '#ede9fe',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+  },
+  badgeText: { color: '#6d28d9', fontWeight: '700' },
+  section: {
+    backgroundColor: '#fff',
+    borderRadius: 22,
+    padding: 18,
+    gap: 14,
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.06,
+    shadowRadius: 18,
+    elevation: 2,
+  },
+  sectionTitle: { fontSize: 18, fontWeight: '800', color: '#111827' },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  rowLabel: { flex: 1, fontSize: 15, color: '#374151', fontWeight: '600' },
+  rowValue: { fontSize: 14, color: '#6b7280', fontWeight: '600' },
+  hint: { fontSize: 12, color: '#6b7280', lineHeight: 18 },
+  actionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#fef2f2',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  actionButtonText: { fontWeight: '700' },
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  chip: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: '#ede9fe',
+  },
+  chipActive: { backgroundColor: '#6d28d9' },
+  chipText: { color: '#6d28d9', fontWeight: '700' },
+  chipTextActive: { color: '#fff' },
+  securityCard: {
+    flexDirection: 'row',
+    gap: 12,
+    alignItems: 'center',
+    backgroundColor: '#f9fafb',
+    borderRadius: 16,
+    padding: 14,
+  },
+  securityTitle: { fontSize: 14, fontWeight: '700', color: '#111827' },
+  securitySubtitle: { fontSize: 12, color: '#6b7280', lineHeight: 18 },
+  securityActions: { alignItems: 'flex-end', gap: 10 },
+  revokeChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: '#fee2e2',
+  },
+  revokeChipText: { color: '#ef4444', fontWeight: '700', fontSize: 12 },
+  emptyCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderStyle: 'dashed',
+    padding: 14,
+  },
+  emptyText: { color: '#6b7280', fontSize: 13 },
+  dangerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderRadius: 14,
+    backgroundColor: '#fff1f2',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  dangerButtonText: { color: '#ef4444', fontWeight: '700' },
+  secondaryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderRadius: 14,
+    backgroundColor: '#f3f4f6',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  secondaryButtonText: { color: '#6d28d9', fontWeight: '700' },
 });
