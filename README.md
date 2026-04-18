@@ -18,7 +18,7 @@ npm start
 - `EXPO_PUBLIC_API_PORT` overrides the local backend port in development. Default: `8080`.
 - `EXPO_PUBLIC_ENABLE_DEMO_LOGIN=true` opt-in olarak sadece development build'lerde demo login alanlarini doldurur.
 - In development, web uses the current browser host and native uses the Expo dev server host automatically.
-- In production, the app defaults to `https://api.datingapp.erenozdemir.com.tr`.
+- In production, the app defaults to `https://vibeapi-185-246-113-9.sslip.io` until the Cloudflare-backed API hostname is repaired.
 - Android cleartext HTTP is enabled only when the configured API origin is HTTP or when no explicit origin is set in development.
 
 ## Auth

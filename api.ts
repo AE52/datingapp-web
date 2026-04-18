@@ -3,7 +3,7 @@ import Constants from 'expo-constants';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 
-const PROD_API_ORIGIN = 'https://api.datingapp.erenozdemir.com.tr';
+const PROD_API_ORIGIN = 'https://vibeapi-185-246-113-9.sslip.io';
 const DEV_API_PORT = process.env.EXPO_PUBLIC_API_PORT?.trim() || '8080';
 const AUTH_SESSION_KEY = 'authSession';
 const LEGACY_USER_KEY = 'user';

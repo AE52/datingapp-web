@@ -5,7 +5,7 @@ COPY package*.json ./
 RUN npm ci
 
 COPY . .
-ENV EXPO_PUBLIC_API_ORIGIN=https://api.datingapp.erenozdemir.com.tr
+ENV EXPO_PUBLIC_API_ORIGIN=https://vibeapi-185-246-113-9.sslip.io
 RUN npm run build:web
 
 FROM nginx:1.27-alpine
