@@ -46,6 +46,40 @@ let fetchPatched = false;
 let refreshInFlight: Promise<AuthSession | null> | null = null;
 const REFRESH_WINDOW_MS = 60_000;
 
+function readWebSessionValue(): string | null {
+  if (Platform.OS !== 'web') return null;
+
+  try {
+    return globalThis.sessionStorage?.getItem(AUTH_SESSION_KEY) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function writeWebSessionValue(value: string) {
+  if (Platform.OS !== 'web') return false;
+
+  try {
+    globalThis.sessionStorage?.setItem(AUTH_SESSION_KEY, value);
+    globalThis.sessionStorage?.removeItem(LEGACY_USER_KEY);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function clearWebSessionValue() {
+  if (Platform.OS !== 'web') return false;
+
+  try {
+    globalThis.sessionStorage?.removeItem(AUTH_SESSION_KEY);
+    globalThis.sessionStorage?.removeItem(LEGACY_USER_KEY);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, '');
 }
@@ -190,6 +224,8 @@ async function persistSession(session: AuthSession | null) {
 
 async function readSessionPayload(): Promise<string | null> {
   if (Platform.OS === 'web') {
+    const webValue = readWebSessionValue();
+    if (webValue) return webValue;
     return AsyncStorage.getItem(AUTH_SESSION_KEY);
   }
 
@@ -210,6 +246,10 @@ async function readSessionPayload(): Promise<string | null> {
 
 async function writeSessionPayload(value: string) {
   if (Platform.OS === 'web') {
+    if (writeWebSessionValue(value)) {
+      await AsyncStorage.multiRemove([AUTH_SESSION_KEY, LEGACY_USER_KEY]);
+      return;
+    }
     await AsyncStorage.setItem(AUTH_SESSION_KEY, value);
     return;
   }
@@ -223,7 +263,9 @@ async function writeSessionPayload(value: string) {
 }
 
 async function clearSessionStorage() {
-  if (Platform.OS !== 'web') {
+  if (Platform.OS === 'web') {
+    clearWebSessionValue();
+  } else {
     try {
       await SecureStore.deleteItemAsync(AUTH_SESSION_KEY);
     } catch {}

@@ -1,5 +1,6 @@
 import { Tabs } from 'expo-router';
 import React, { useEffect, useState } from 'react';
+import { Platform } from 'react-native';
 
 import { Ionicons } from '@expo/vector-icons';
 import { getStoredUser } from '@/api';
@@ -18,6 +19,8 @@ export default function TabLayout() {
     };
     checkRole();
   }, []);
+
+  const canShowAdminTab = isAdmin && Platform.OS !== 'web';
 
   return (
     <Tabs
@@ -87,7 +90,7 @@ export default function TabLayout() {
         name="admin"
         options={{
           title: 'Admin',
-          href: isAdmin ? '/admin' : null,
+          href: canShowAdminTab ? '/admin' : null,
           tabBarIcon: ({ color, focused }) => (
             <Ionicons name={focused ? 'settings' : 'settings-outline'} size={24} color={color} />
           ),

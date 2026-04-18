@@ -24,8 +24,10 @@ npm start
 ## Auth
 
 - The app stores an authenticated session in `authSession`.
+- Web builds scope the authenticated session to the current browser session instead of long-lived local storage.
 - Requests to the backend origin automatically receive the bearer token.
 - Logout clears the full session, not just the legacy user cache.
+- Expo web export does not expose the admin surface in production; keep admin operations on native builds until a secure web admin boundary exists.
 
 ## Dev seed
 

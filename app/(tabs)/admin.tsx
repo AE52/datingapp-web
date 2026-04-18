@@ -9,6 +9,7 @@ import {
   FlatList,
   ActivityIndicator,
   Dimensions,
+  Platform,
   TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -100,6 +101,10 @@ export default function AdminScreen() {
 
   useEffect(() => {
     const bootstrap = async () => {
+      if (Platform.OS === 'web') {
+        router.replace('/');
+        return;
+      }
       const currentUser = await getStoredUser();
       if (!currentUser) {
         router.replace('/login');
